@@ -1,0 +1,158 @@
+from keras.layers import Conv2D, MaxPool2D, Dropout, Flatten, Dense, BatchNormalization, GlobalAvgPool2D
+from keras.models import Sequential, load_model
+from keras.src.legacy.preprocessing.image import ImageDataGenerator   
+import json
+import numpy as np
+
+import keras
+
+# CNN Model
+
+model = Sequential()
+
+model.add(Conv2D(filters= 16, kernel_size= (3,3), activation= 'relu', input_shape = (224,224,3)))
+
+model.add(Conv2D(filters= 36, kernel_size= (3,3), activation= 'relu', )) 
+model.add(MaxPool2D(pool_size=(2,2)))
+
+model.add(Conv2D(filters= 64, kernel_size= (3,3), activation= 'relu', )) 
+model.add(MaxPool2D(pool_size=(2,2)))
+
+model.add(Conv2D(filters= 128, kernel_size= (3,3), activation= 'relu', )) 
+model.add(MaxPool2D(pool_size=(2,2)))
+
+model.add(Dropout(rate= 0.25))
+
+model.add(Flatten())
+model.add(Dense(units=64, activation= 'relu'))
+model.add(Dropout(rate=.25))
+model.add(Dense(units=1, activation= 'sigmoid'))
+
+model.summary()
+
+model.compile(optimizer='adam', loss= keras.losses.binary_crossentropy, metrics=['accuracy'])
+
+# Preparing our ddata using Data Generator
+
+def preprocessingImages1(path): # Use train foledr
+    '''
+    input : Path
+    output : preprocesse images
+    '''
+
+    image_data = ImageDataGenerator(zoom_range=0.2, shear_range=.2, rescale=1/255, horizontal_flip= True)
+    image = image_data.flow_from_directory(directory= path, target_size=(224,224), batch_size=32, class_mode='binary')
+
+    return image
+
+train_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\train"
+train_data = preprocessingImages1(train_path)
+
+def preprocessingImages2(path): # Use test folder
+    '''
+    input : Path
+    output : preprocesse images
+    '''
+
+    image_data = ImageDataGenerator(rescale=1/255)
+    image = image_data.flow_from_directory(directory= path, target_size=(224,224), batch_size=32, class_mode='binary')
+
+    return image
+
+test_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\test"
+test_data = preprocessingImages2(test_path)
+
+val_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\validation"
+val_data = preprocessingImages2(val_path)
+
+# Early stopping an model check point
+
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+
+# Early stopping
+
+es = EarlyStopping(monitor="val_accuracy", min_delta=0.01, patience=5, verbose=1, mode="auto")
+
+# Model checkpoint
+mc = ModelCheckpoint(monitor="val_accuracy", filepath="C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5", verbose=1, save_best_only=True, mode="auto")
+
+cd = [es,mc]
+
+# Model Training
+
+
+# The code below will reduce the amount of effort use in training
+
+# Since we made the preprocessing functions above it will save time
+model_his = None
+
+train_model = input("Do you want to train the model? (Yes or No) ")
+if(train_model.lower() =="yes"):
+    hs = model.fit(x= train_data,
+                    steps_per_epoch= train_data.samples // train_data.batch_size, 
+                    epochs=30, 
+                    verbose=1, 
+                    validation_data = val_data, 
+                    validation_steps=val_data.samples // val_data.batch_size, 
+                    callbacks=cd)
+    # Save history
+    with open("Model_history.json", "w") as f:
+        json.dump(model_his.history, f)
+
+    
+else:
+    model = load_model(r"C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5")
+
+    # Load history
+
+    with open("Model_history.json", "r") as f:
+        model_his = json.load(f)
+
+# Model Graphical Interpretation
+# from Brain_Tumor_detector import dict_keys
+import matplotlib.pyplot as plt
+p = input("Do you want to see a plot of the Accuracy vs the Validation Accuracy? (Yes or No) ")
+if(p.lower() == "yes"):
+    h = model_his
+
+    plt.plot(h['accuracy'])
+    plt.plot(h['val_accuracy'], c='red')
+
+    plt.title("Accuracy vs Validation Accuracy")
+    plt.legend(["Train", "Validation"])
+    plt.show()
+
+# Model Accuracy
+model_accuracy = input("Do you want to see the model's accuracy? (Yes or No) ")
+if(model_accuracy.lower() == "yes"):
+    model = load_model("C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5")
+
+    acc = model.evaluate(test_data)[1]
+
+    print(f"The accuracy of our model is {acc*100}%")
+
+# Check if model works
+
+from keras.preprocessing.image import load_img, img_to_array
+
+path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\train\glioma\\Tr-gl_1365.jpg"
+
+img = load_img(path, target_size=(224,224))
+input_array = img_to_array(img)/255 # You divide it by 255 to normalize the image
+
+plt.imshow(input_array)
+
+print(input_array.shape) # Checks if size is correect
+
+input_array = np.expand_dims(input_array, axis=0)
+
+pred = model.predict(input_array)[0][0]
+
+print(pred)
+
+if (pred < 0.5):
+    print("The MIR has a Glioma brain tumor")
+    plt.show()
+else:
+    print("The MIR shows no Glioma brain tumor")
+    plt.show()

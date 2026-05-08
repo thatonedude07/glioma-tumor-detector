@@ -1,0 +1,242 @@
+import os
+import json
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Image loading + preprocessing tools
+from keras.src.legacy.preprocessing.image import ImageDataGenerator
+from keras.preprocessing.image import load_img, img_to_array
+
+# Model tools
+from keras.models import Sequential, load_model
+from keras.layers import Dense, Dropout, GlobalAvgPool2D
+from keras.applications import MobileNetV2
+
+# Training helpers
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+import keras
+
+
+
+# Model setup (Transfer Learning)
+
+# Load pretrained MobileNetV2 (trained on ImageNet)
+# include_top=False removes the classification head so we can add our own
+base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224,224,3))
+
+# Freeze all layers so their weights don't get updated during training
+# This keeps learned features like edges, textures, etc.
+for layer in base_model.layers:
+    layer.trainable = False
+
+# Build final model on top of pretrained base
+model = Sequential([
+    base_model,                 # feature extractor
+    GlobalAvgPool2D(),          # reduces feature maps into a single vector
+    Dense(128, activation='relu'),  # learns patterns specific to brain tumors
+    Dropout(0.5),               # prevents overfitting (randomly drops neurons)
+    Dense(1, activation='sigmoid')  # outputs probability (0 to 1)
+])
+
+# Compile model (define optimizer, loss function, and metrics)
+model.compile(
+    optimizer='adam', 
+    loss='binary_crossentropy',   # used for 2-class problems
+    metrics=['accuracy']
+)
+
+model.summary()  # prints model structure
+
+
+# =========================
+# DATA PREPROCESSING
+# =========================
+
+def preprocessingImages1(path):
+    '''
+    Preprocess training images with augmentation
+    (augmentation helps model generalize better)
+    '''
+    image_data = ImageDataGenerator(
+        zoom_range=0.2,     # randomly zooms images
+        shear_range=0.2,    # slight distortion
+        rescale=1/255       # normalize pixel values (0–255 → 0–1)
+        # horizontal_flip removed because it's not ideal for MRI scans
+    )
+
+    # Loads images from directory and assigns labels automatically
+    image = image_data.flow_from_directory(
+        directory=path,
+        target_size=(224,224),  # resize all images
+        batch_size=32,          # how many images per batch
+        class_mode='binary'     # binary classification (0 or 1)
+    )
+
+    return image
+
+
+def preprocessingImages2(path):
+    '''
+    Preprocess validation/test images (no augmentation)
+    '''
+    image_data = ImageDataGenerator(rescale=1/255)
+
+    image = image_data.flow_from_directory(
+        directory=path,
+        target_size=(224,224),
+        batch_size=32,
+        class_mode='binary'
+    )
+
+    return image
+
+
+# File paths to datasets
+train_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\train"
+test_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\test"
+val_path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\validation"
+
+# Load datasets
+train_data = preprocessingImages1(train_path)
+test_data = preprocessingImages2(test_path)
+val_data = preprocessingImages2(val_path)
+
+
+
+# Class weights (handles imbalance)
+
+
+# Counts how many images per class and balances them
+from sklearn.utils.class_weight import compute_class_weight
+
+class_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(train_data.classes),
+    y=train_data.classes
+)
+
+# Convert to dictionary format required by Keras
+class_weights = dict(enumerate(class_weights))
+
+print("Class Weights:", class_weights)
+
+# Shows how labels are assigned (IMPORTANT for prediction logic)
+print("Class Indices:", train_data.class_indices)
+
+
+# Callbacks (training control)
+
+# Stops training early if validation accuracy stops improving
+es = EarlyStopping(
+    monitor="val_accuracy", 
+    patience=5, 
+    verbose=1
+)
+
+# Saves best model automatically
+mc = ModelCheckpoint(
+    filepath="C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5",
+    monitor="val_accuracy",
+    verbose=1,
+    save_best_only=True
+)
+
+cd = [es, mc]
+
+
+# Training
+
+model_his = None  # will store training history
+
+train_model = input("Do you want to train the model? (Yes or No): ")
+
+if train_model.lower() == "yes":
+
+    # Train model
+    hs = model.fit(
+        x=train_data,
+        steps_per_epoch=train_data.samples // train_data.batch_size,
+        epochs=30,
+        validation_data=val_data,
+        validation_steps=val_data.samples // val_data.batch_size,
+        callbacks=cd,
+        class_weight=class_weights  # balances dataset
+    )
+
+    model_his = hs  # save training history
+
+    # Save history to file
+    with open("Model_history.json", "w") as f:
+        json.dump(model_his.history, f)
+
+else:
+    # Load saved model
+    model = load_model("C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5")
+
+    # Load saved history
+    with open("Model_history.json", "r") as f:
+        model_his = json.load(f)
+
+
+# Plot training results
+
+
+p = input("Show accuracy plot? (Yes or No): ")
+
+if p.lower() == "yes":
+    # Handles both dict and history object
+    h = model_his.history if hasattr(model_his, "history") else model_his
+
+    # Plot training vs validation accuracy
+    plt.plot(h['accuracy'])
+    plt.plot(h['val_accuracy'])
+    plt.title("Accuracy vs Validation Accuracy")
+    plt.legend(["Train", "Validation"])
+    plt.show()
+
+
+# Model accuracy check
+
+model_accuracy = input("Check model accuracy? (Yes or No): ")
+acc = model.evaluate(test_data)[1]
+if model_accuracy.lower() == "yes":
+    model = load_model("C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\Model location\\bestmodel.h5")
+
+    # Evaluate on test dataset
+
+    print(f"Model Accuracy: {acc*100:.2f}%")
+
+
+# Single image predicton
+
+# Path to image to test
+path = "C:\\Users\\karst\\Documents\\VSCODE PROJECT\\VSCODE BRAIN TUMOR PROJECT\\train\\notumor\\Tr-no_15.jpg"
+
+# Load and resize image
+img = load_img(path, target_size=(224,224))
+
+# Convert image to array and normalize
+input_array = img_to_array(img) / 255
+
+# Display image
+plt.imshow(input_array)
+plt.title("Input MRI")
+plt.axis('off')
+
+# Add batch dimension (model expects batch input)
+input_array = np.expand_dims(input_array, axis=0)
+
+# Predict probability
+pred = model.predict(input_array)[0][0]
+
+print(f"Raw Prediction: {pred}")
+
+# Interpretation:
+# closer to 0 → class 0
+# closer to 1 → class 1
+if pred < 0.5:
+    plt.title(f"Prediction at {acc*100:.2f}% model accuracy: Glioma brain tumor detected")
+else:
+    plt.title(f"Prediction at {acc*100:.2f}% model accuracy: No brain tumor detected")
+
+plt.show()
